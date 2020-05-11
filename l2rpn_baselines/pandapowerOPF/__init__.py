@@ -1,13 +1,10 @@
 __all__ = [
-    "Template",
+    "PandapowerAgent",
     "evaluate",
-    "train"
 ]
 
-from l2rpn_baselines.Template.Template import Template
-from l2rpn_baselines.Template.evaluate import evaluate
-from l2rpn_baselines.Template.train import train
-
+from l2rpn_baselines.pandapowerOPF.pandapowerOPFAgent import PandapowerAgent
+from l2rpn_baselines.pandapowerOPF.evaluate import evaluate
 """
 In the __init__ file, it is expected to export 3 classes with names that depends on the name you gave to your baseline.
 For example, say you chose to write a baseline with the awesome name "XXX" (what an imagination!) you should export

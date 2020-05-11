@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-
-# Copyright (c) 2020, RTE (https://www.rte-france.com)
-# See AUTHORS.txt
-# This Source Code Form is subject to the terms of the Mozilla Public License, version 2.0.
-# If a copy of the Mozilla Public License, version 2.0 was not distributed with this file,
-# you can obtain one at http://mozilla.org/MPL/2.0/.
-# SPDX-License-Identifier: MPL-2.0
-# This file is part of L2RPN Baselines, L2RPN Baselines a repository to host baselines for l2rpn competitions.
-
 import os
 from grid2op.Runner import Runner
 
-from l2rpn_baselines.Template.Template import Template
+from l2rpn_baselines.pandapowerOPF.pandapowerOPFAgent import PandapowerAgent
 from l2rpn_baselines.utils.save_log_gif import save_log_gif
 
 
@@ -67,18 +58,17 @@ def evaluate(env,
     runner_params = env.get_params_for_runner()
     runner_params["verbose"] = verbose
 
-    # Create the agent (this piece of code can change)
-    agent = Template(env.action_space, env.observation_space, "Template")
-
-    # Load weights from file (for example)
-    agent.load(load_path)
+    # Instantiate agent
+    agent = PandapowerAgent(env.action_space,
+                            env.init_grid_path,  # load initial pandapower grid
+                            acceptable_loading_pct=98.0,  # which transformer and line loading is acceptable
+                            min_loss_reduction_mwt=10.,  # how big should a loss reduction be to justify an action
+                            opf_type="pypower")  # if you have PowerModels.jl installed, use "powermodels"
 
     # Build runner
     runner = Runner(**runner_params,
                     agentClass=None,
                     agentInstance=agent)
-
-    # you can do stuff with your model here
 
     # start the runner
     res = runner.run(path_save=logs_path,
@@ -100,9 +90,6 @@ def evaluate(env,
 
 
 if __name__ == "__main__":
-    """
-    This is a possible implementation of the eval script.
-    """
     import grid2op
     from l2rpn_baselines.utils import cli_eval
     args_cli = cli_eval().parse_args()
