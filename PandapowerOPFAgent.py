@@ -4,7 +4,7 @@ from copy import deepcopy
 import numpy as np
 
 import grid2op
-import l2rpn_baselines.pandapowerOPF.pp_functions as ppf
+import l2rpn_baselines.PandapowerOPFAgent.pp_functions as ppf
 import pandapower as pp
 from grid2op.Agent import Agent
 
@@ -19,7 +19,7 @@ def make_logger():
     return _logger
 
 
-class PandapowerAgent(Agent):
+class PandapowerOPFAgent(Agent):
     """
     The purpose of this agent is to supply a usable base for power system calculations based on the grid2op backend.
     Incoming observations are automatically parsed into a pandapower grid. The grid can then be used for any

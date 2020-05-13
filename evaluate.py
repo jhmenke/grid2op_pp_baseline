@@ -2,7 +2,7 @@
 import os
 from grid2op.Runner import Runner
 
-from l2rpn_baselines.pandapowerOPF.pandapowerOPFAgent import PandapowerAgent
+from l2rpn_baselines.PandapowerOPFAgent.PandapowerOPFAgent import PandapowerOPFAgent
 from l2rpn_baselines.utils.save_log_gif import save_log_gif
 
 
@@ -59,7 +59,7 @@ def evaluate(env,
     runner_params["verbose"] = verbose
 
     # Instantiate agent
-    agent = PandapowerAgent(env.action_space,
+    agent = PandapowerOPFAgent(env.action_space,
                             env.init_grid_path,  # load initial pandapower grid
                             acceptable_loading_pct=98.0,  # which transformer and line loading is acceptable
                             min_loss_reduction_mwt=10.,  # how big should a loss reduction be to justify an action
