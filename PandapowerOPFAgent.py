@@ -6,7 +6,7 @@ import numpy as np
 import grid2op
 import l2rpn_baselines.PandapowerOPFAgent.pp_functions as ppf
 import pandapower as pp
-from grid2op.Agent import Agent
+from grid2op.Agent import BaseAgent
 
 
 def make_logger():
@@ -19,7 +19,7 @@ def make_logger():
     return _logger
 
 
-class PandapowerOPFAgent(Agent):
+class PandapowerOPFAgent(BaseAgent):
     """
     The purpose of this agent is to supply a usable base for power system calculations based on the grid2op backend.
     Incoming observations are automatically parsed into a pandapower grid. The grid can then be used for any
@@ -49,7 +49,7 @@ class PandapowerOPFAgent(Agent):
         :param opf_type: which OPF to use (pypower or powermodels)
         :param line_auto_reconnect: reconnect disconnected lines automatically as soon as possible
         """
-        Agent.__init__(self, action_space)
+        BaseAgent.__init__(self, action_space)
         self.do_nothing_action = action_space({})
         self.grid = pp.from_json(grid_path)
         self.acceptable_loading_pct = acceptable_loading_pct
