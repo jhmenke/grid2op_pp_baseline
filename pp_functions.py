@@ -27,7 +27,7 @@ def find_value_for_pp_bus(grid: pp.pandapowerNet,
 
 def calc_losses(grid: pp.pandapowerNet):
     # calculate grid losses
-    return grid.res_gen.p_mw.sum() + grid.res_ext_grid.p_mw.sum() + grid.res_sgen.p_mw.sum() - grid.load.p_mw.sum()
+    return -grid.res_bus.p_mw.sum()
 
 
 def make_zero_idx(elements: pd.DataFrame,
