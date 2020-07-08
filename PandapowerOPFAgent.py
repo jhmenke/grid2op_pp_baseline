@@ -62,6 +62,10 @@ class PandapowerOPFAgent(BaseAgent):
         if self.timestep == 0:
             self.grid.trafo["max_loading_percent"] = self.acceptable_loading_pct
             self.grid.line["max_loading_percent"] = self.acceptable_loading_pct
+            if "max_i_ka" not in self.grid.line.columns:
+                self.grid.line["max_i_ka"] = obs._obs_env._thermal_limit_a[:len(self.grid.line)] / 1000.
+            if "max_i_ka" not in self.grid.trafo.columns:
+                self.grid.trafo["max_i_ka"] = obs._obs_env._thermal_limit_a[len(self.grid.line):] / 1000.
             self.grid.poly_cost.drop(self.grid.poly_cost.index, inplace=True)
             assert len(self.grid.ext_grid) == 1 and len(obs.gen_type) == len(self.grid.gen) + len(self.grid.ext_grid)
             self.grid.bus.min_vm_pu = 0.9
