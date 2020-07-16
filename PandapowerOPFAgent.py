@@ -199,7 +199,7 @@ class PandapowerOPFAgent(BaseAgent):
                 power_down = np.where(p_redispatched < 0)[0]
                 p_redispatched[power_down] -= redispatch_sum / len(power_down)
             assert abs(p_redispatched[gen_p_redispatched].sum()) < 1e-14
-            action_space["redispatch"] = [(idx, p) for idx, p in zip(np.arange(len(self.grid.gen) + 1)[gen_p_redispatched],
+            action_space["redispatch"] = [(idx, p) for idx, p in zip(np.arange(len(self.grid.gen) + len(self.grid.ext_grid))[gen_p_redispatched],
                                                                      p_redispatched[gen_p_redispatched]) if abs(p) >= 1e-3]
             # self.logger.info(action_space["redispatch"])
         # Set lines action
