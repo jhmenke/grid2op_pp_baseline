@@ -67,28 +67,37 @@ class PandapowerOPFAgent(BaseAgent):
             if "max_i_ka" not in self.grid.trafo.columns:
                 self.grid.trafo["max_i_ka"] = obs._obs_env._thermal_limit_a[len(self.grid.line):] / 1000.
             self.grid.poly_cost.drop(self.grid.poly_cost.index, inplace=True)
-            assert len(self.grid.ext_grid) == 1 and len(obs.gen_type) == len(self.grid.gen) + len(self.grid.ext_grid)
+            assert len(self.grid.ext_grid) == 1 or self.grid.gen.slack.any()
+            assert len(obs.gen_type) == len(self.grid.gen) + len(self.grid.ext_grid)
             self.grid.bus.min_vm_pu = 0.9
             self.grid.bus.max_vm_pu = 1.2
             # gen
-            self.grid.gen.type = obs.gen_type[:-1]
-            self.grid.gen.controllable = obs.gen_redispatchable[:-1]
-            self.grid.gen.min_p_mw = obs.gen_pmin[:-1]
-            self.grid.gen.max_p_mw = obs.gen_pmax[:-1]
+            if len(self.grid.ext_grid) == 0:
+                self.grid.gen.type = obs.gen_type
+                self.grid.gen.controllable = obs.gen_redispatchable
+                self.grid.gen.min_p_mw = obs.gen_pmin
+                self.grid.gen.max_p_mw = obs.gen_pmax
+                self.grid.gen.min_q_mvar = -obs.gen_pmax
+                self.grid.gen.max_q_mvar = obs.gen_pmax
+                for row in self.grid.gen[self.grid.gen.controllable].itertuples():
+                    pp.create_poly_cost(self.grid, row.Index, "gen", cp1_eur_per_mw=1)  # perform loss minimization
+            else:
+                self.grid.gen.type = obs.gen_type[:-1]
+                self.grid.gen.controllable = obs.gen_redispatchable[:-1]
+                self.grid.gen.min_p_mw = obs.gen_pmin[:-1]
+                self.grid.gen.max_p_mw = obs.gen_pmax[:-1]
+                self.grid.gen.min_q_mvar = -obs.gen_pmax[:-1]
+                self.grid.gen.max_q_mvar = obs.gen_pmax[:-1]
+                # ext grid (last gen)
+                self.grid.ext_grid.type = obs.gen_type[-1]
+                self.grid.ext_grid.min_p_mw = obs.gen_pmin[-1]
+                self.grid.ext_grid.max_p_mw = obs.gen_pmax[-1]
+                self.grid.ext_grid.min_q_mvar = -obs.gen_pmax[-1]
+                self.grid.ext_grid.max_q_mvar = obs.gen_pmax[-1]
+                assert obs.gen_redispatchable[-1]
+                pp.create_poly_cost(self.grid, self.grid.ext_grid.index[0], "ext_grid", cp1_eur_per_mw=1)
             self.gen_min_p = obs.gen_pmin
             self.gen_max_p = obs.gen_pmax
-            # ext grid (last gen)
-            self.grid.gen.min_q_mvar = -obs.gen_pmax[:-1]
-            self.grid.gen.max_q_mvar = obs.gen_pmax[:-1]
-            self.grid.ext_grid.type = obs.gen_type[-1]
-            assert obs.gen_redispatchable[-1]
-            self.grid.ext_grid.min_p_mw = obs.gen_pmin[-1]
-            self.grid.ext_grid.max_p_mw = obs.gen_pmax[-1]
-            self.grid.ext_grid.min_q_mvar = -obs.gen_pmax[-1]
-            self.grid.ext_grid.max_q_mvar = obs.gen_pmax[-1]
-            for row in self.grid.gen[self.grid.gen.controllable].itertuples():
-                pp.create_poly_cost(self.grid, row.Index, "gen", cp1_eur_per_mw=1)  # perform loss minimization
-            pp.create_poly_cost(self.grid, self.grid.ext_grid.index[0], "ext_grid", cp1_eur_per_mw=1)
         self.refresh_gen_values(obs)
         self.grid.load["p_mw"] = obs.load_p
         self.grid.load["q_mvar"] = obs.load_q
@@ -109,15 +118,22 @@ class PandapowerOPFAgent(BaseAgent):
             self.grid.ext_grid.loc[row.Index, "vm_pu"] = ppf.find_value_for_pp_bus(self.grid, obs.v_or, obs.v_ex, row.bus)
         for row in self.grid.gen.itertuples():
             self.grid.gen.loc[row.Index, "vm_pu"] = ppf.find_value_for_pp_bus(self.grid, obs.v_or, obs.v_ex, row.bus)
-        self.grid.gen["p_mw"] = obs.prod_p[:-1]
-        self.grid.gen["res_q_mvar"] = obs.prod_q[:-1]
         ramp_down, ramp_up = obs.gen_max_ramp_down + 1e-6, obs.gen_max_ramp_up - 1e-6
-        abs_min, abs_max = np.minimum(self.grid.gen.p_mw, obs.gen_pmin[:-1]), np.maximum(self.grid.gen.p_mw, obs.gen_pmax[:-1])
-        self.grid.gen["max_p_mw"] = (self.grid.gen.p_mw + ramp_up[:-1]).clip(abs_min, abs_max)
-        self.grid.gen["min_p_mw"] = (self.grid.gen.p_mw - ramp_down[:-1]).clip(abs_min, abs_max)
-        self.grid.ext_grid["p_mw"] = obs.prod_p[-1]
-        self.grid.ext_grid["max_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
-        self.grid.ext_grid["min_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
+        if len(self.grid.ext_grid) == 0:
+            self.grid.gen["p_mw"] = obs.prod_p
+            self.grid.gen["res_q_mvar"] = obs.prod_q
+            abs_min, abs_max = np.minimum(self.grid.gen.p_mw, obs.gen_pmin), np.maximum(self.grid.gen.p_mw, obs.gen_pmax)
+            self.grid.gen["max_p_mw"] = (self.grid.gen.p_mw + ramp_up).clip(abs_min, abs_max)
+            self.grid.gen["min_p_mw"] = (self.grid.gen.p_mw - ramp_down).clip(abs_min, abs_max)
+        else:
+            self.grid.gen["p_mw"] = obs.prod_p[:-1]
+            self.grid.gen["res_q_mvar"] = obs.prod_q[:-1]
+            abs_min, abs_max = np.minimum(self.grid.gen.p_mw, obs.gen_pmin[:-1]), np.maximum(self.grid.gen.p_mw, obs.gen_pmax[:-1])
+            self.grid.ext_grid["max_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
+            self.grid.ext_grid["min_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
+            self.grid.ext_grid["p_mw"] = obs.prod_p[-1]
+            self.grid.gen["max_p_mw"] = (self.grid.gen.p_mw + ramp_up[:-1]).clip(abs_min, abs_max)
+            self.grid.gen["min_p_mw"] = (self.grid.gen.p_mw - ramp_down[:-1]).clip(abs_min, abs_max)
 
     def act(self, observation: grid2op.Observation, reward, done=False):
         # 1. Parse observations into pandapower grid
