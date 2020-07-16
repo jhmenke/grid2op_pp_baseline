@@ -166,7 +166,10 @@ class PandapowerOPFAgent(BaseAgent):
                     lines_to_be_connected.append(trafo_zero_idx)  # automatically reconnect trafos if possible
                     self.grid.trafo.loc[trafo_oos, "in_service"] = True
         # 3. Perform OPF
-        p_dispatched_current = np.array(self.grid.gen.p_mw.tolist() + self.grid.ext_grid.p_mw.tolist())
+        if len(self.grid.ext_grid) > 0:
+            p_dispatched_current = np.array(self.grid.gen.p_mw.tolist() + self.grid.ext_grid.p_mw.tolist())
+        else:
+            p_dispatched_current = self.grid.gen.p_mw.values
         p_redispatched = p_dispatched_current
         generation, opf_line_status, opf_trafo_status, make_changes = ppf.run_opf(opf_grid, self.min_loss_reduction_mwt, self.acceptable_loading_pct,
                                                                                   self.opf_type.lower(), logger=self.logger)
