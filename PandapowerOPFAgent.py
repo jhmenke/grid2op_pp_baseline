@@ -147,7 +147,7 @@ class PandapowerOPFAgent(BaseAgent):
             for line_oos in self.grid.line.loc[~self.grid.line.in_service].index:
                 line_zero_idx = self.grid.line.index.get_loc(line_oos)
                 line_state = observation.state_of(line_id=line_zero_idx)
-                if line_state["indisponibility"] > 0:
+                if line_state["cooldown_time"] > 0:
                     opf_grid.line.drop(line_oos, inplace=True)  # drop line, otherwise it would be used in the OPF
                     self.logger.info(f"Observation: Line {line_oos} out of service!")
                     line_failures.append(line_zero_idx)
@@ -158,7 +158,7 @@ class PandapowerOPFAgent(BaseAgent):
             for trafo_oos in self.grid.trafo.loc[~self.grid.trafo.in_service].index:
                 trafo_zero_idx = self.grid.trafo.index.get_loc(trafo_oos) + len(self.grid.line)  # offset pp lines
                 trafo_state = observation.state_of(line_id=trafo_zero_idx)
-                if trafo_state["indisponibility"] > 0:
+                if trafo_state["cooldown_time"] > 0:
                     opf_grid.trafo.drop(trafo_oos, inplace=True)  # drop trafo, otherwise it would be used in the OPF
                     self.logger.info(f"Observation: trafo {trafo_oos} out of service!")
                     line_failures.append(trafo_zero_idx)
