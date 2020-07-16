@@ -55,7 +55,10 @@ def run_opf(grid: pp.pandapowerNet,
             pp.runpm_ots(grid, pm_nl_solver="ipopt", pm_model="ACPPowerModel")  # PowerModels.jl OPF
             grid.line.loc[:, "in_service"] = grid.res_line.loc[:, "in_service"].values.astype(bool)
             grid.trafo.loc[:, "in_service"] = grid.res_trafo.loc[:, "in_service"].values.astype(bool)
-        generation = np.array(grid.res_gen.p_mw.tolist() + grid.res_ext_grid.p_mw.tolist())
+        if len(grid.ext_grid) > 0:
+            generation = np.array(grid.res_gen.p_mw.tolist() + grid.res_ext_grid.p_mw.tolist())
+        else:
+            generation = grid.res_gen.p_mw.values
         losses_avoided = loss_before - calc_losses(grid)
         line_loading_after = grid.res_line.loading_percent.max()
         trafo_loading_after = (grid.res_trafo.i_hv_ka / grid.trafo.max_i_ka * 100.).max()
