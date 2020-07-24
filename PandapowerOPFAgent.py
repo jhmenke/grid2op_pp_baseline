@@ -193,11 +193,13 @@ class PandapowerOPFAgent(BaseAgent):
             p_redispatched[abs(p_redispatched) < 0.5] = 0.
             redispatch_sum = p_redispatched[gen_p_redispatched].sum()  # this sum needs to be 0. for a valid redispatch
             if redispatch_sum > 0.:
-                power_up = np.where(p_redispatched > 0)[0]
-                p_redispatched[power_up] -= redispatch_sum / len(power_up)
+                where_redisp = np.where(p_redispatched > 0)
+                power_up = where_redisp[0][np.argmax(p_redispatched[where_redisp])]
+                p_redispatched[power_up] -= redispatch_sum
             elif redispatch_sum < 0.:
-                power_down = np.where(p_redispatched < 0)[0]
-                p_redispatched[power_down] -= redispatch_sum / len(power_down)
+                where_redisp = np.where(p_redispatched < 0)
+                power_down = where_redisp[0][np.argmin(p_redispatched[where_redisp])]
+                p_redispatched[power_down] -= redispatch_sum
             assert abs(p_redispatched[gen_p_redispatched].sum()) < 1e-14
             action_space["redispatch"] = [(idx, p) for idx, p in zip(np.arange(len(self.grid.gen) + len(self.grid.ext_grid))[gen_p_redispatched],
                                                                      p_redispatched[gen_p_redispatched]) if abs(p) >= 1e-3]
