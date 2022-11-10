@@ -2,7 +2,7 @@ import logging
 from copy import deepcopy
 
 import numpy as np
-
+import os
 import grid2op
 import l2rpn_baselines.PandapowerOPFAgent.pp_functions as ppf
 import pandapower as pp
@@ -36,10 +36,10 @@ class PandapowerOPFAgent(BaseAgent):
     logger = make_logger()
 
     def __init__(self, action_space, grid_path: str,
-                 acceptable_loading_pct: float = 99.9,
-                 min_loss_reduction_mwt: float = 0.5,
+                 acceptable_loading_pct: float = 99, #99.9,
+                 min_loss_reduction_mwt: float = 0.45,
                  opf_type: str = "pypower",
-                 line_auto_reconnect: bool = False):
+                 line_auto_reconnect: bool = False, savestate_path ='./'):
         """
         Initialize agent
         :param action_space: the Grid2Op action space
@@ -50,54 +50,119 @@ class PandapowerOPFAgent(BaseAgent):
         :param line_auto_reconnect: reconnect disconnected lines automatically as soon as possible
         """
         BaseAgent.__init__(self, action_space)
-        self.do_nothing_action = action_space({})
+        #self.do_nothing_action = action_space({})
         self.grid = pp.from_json(grid_path)
         self.acceptable_loading_pct = acceptable_loading_pct
         self.min_loss_reduction_mwt = min_loss_reduction_mwt
         self.opf_type = opf_type
         self.line_auto_reconnect = line_auto_reconnect
         assert self.opf_type.lower() in ("pypower", "powermodels"), "choose either pypower or powermodels as the opf type"
+        
+        
+        """ 
+        Define state variable names/dicts for later saving the agent state
+        """
+        varnames_base = ["space_prng","seed_used"]
+        varnames_baseAction = ["space_prng","seed_used","n","global_vars", 
+                               "shape","dtype","attr_list_vect",
+                               "_to_extract_vect"]
+        varnames_custom = ["total_losses", "timestep"]
+        self.state_variables_base = dict(zip(varnames_base, 
+                                        [None]*len(varnames_base)))
+        self.state_variables_baseAction = dict(zip(varnames_baseAction, 
+                                            [None]*len(varnames_baseAction)))
+        self.state_variables_custom = dict(zip(varnames_custom, [None]*
+                                        len(varnames_custom)))
+        self.savestate_path = savestate_path
+        
+
+    def save_state(self):        
+        # Write all base state variables to dict      
+        for key in self.state_variables_base:
+            if key!="space_prng":
+                self.state_variables_base[key] = getattr(self, key)
+            else:
+                randstate = getattr(self, key)
+                self.state_variables_base[key] = randstate.get_state()
+        # Write all base action variables to dict   
+        for key in self.state_variables_baseAction:
+            if key!="space_prng":
+                self.state_variables_baseAction[key] = getattr(self.action_space, key)
+            else:
+                randstate = getattr(self.action_space, key)
+                self.state_variables_baseAction[key] = randstate.get_state()
+        # Write all custom state variables to dict          
+        for key in self.state_variables_custom:             
+                self.state_variables_custom[key] = getattr(self, key)
+        # Check if save directory exists, if not, create it
+        if not os.path.exists(self.savestate_path):
+            os.makedirs(self.savestate_path)
+        # Save all dicts 
+        np.save(os.path.join(self.savestate_path,
+                             'state_variables_base.npy'), 
+                self.state_variables_base) 
+        np.save(os.path.join(self.savestate_path,
+                             'state_variables_baseAction.npy'),
+                self.state_variables_baseAction) 
+        np.save(os.path.join(self.savestate_path,
+                              'state_variables_custom.npy'),
+                self.state_variables_custom)       
+   
+    def load_state(self):
+        # Load all dicts 
+        state_variables_base_load = np.load(
+            os.path.join(self.savestate_path,'state_variables_base.npy'),
+            allow_pickle='TRUE').item()
+        state_variables_baseAction_load = np.load(
+            os.path.join(self.savestate_path,'state_variables_baseAction.npy'),
+            allow_pickle='TRUE').item()
+        state_variables_custom_load = np.load(
+            os.path.join(self.savestate_path,'state_variables_custom.npy'),
+            allow_pickle='TRUE').item()
+        # Update all base state variables from loaded dict
+        for key in state_variables_base_load:
+            if key!="space_prng":
+                setattr(self, key, state_variables_base_load[key])
+            else:
+                self.space_prng.set_state(state_variables_base_load[key])
+        # Update all base action variables from loaded dict
+        for key in state_variables_baseAction_load:
+            if key!="space_prng":
+                setattr(self.action_space, key, state_variables_baseAction_load[key])
+            else:
+                self.action_space.space_prng.set_state(state_variables_baseAction_load[key])
+        # Update all custom state variables from dict     
+        for key in state_variables_custom_load:            
+                setattr(self, key, state_variables_custom_load[key])
+    
 
     def parse_observation_to_grid(self, obs: grid2op.Observation):
         if self.timestep == 0:
             self.grid.trafo["max_loading_percent"] = self.acceptable_loading_pct
             self.grid.line["max_loading_percent"] = self.acceptable_loading_pct
-            if "max_i_ka" not in self.grid.line.columns:
-                self.grid.line["max_i_ka"] = obs._obs_env._thermal_limit_a[:len(self.grid.line)] / 1000.
-            if "max_i_ka" not in self.grid.trafo.columns:
-                self.grid.trafo["max_i_ka"] = obs._obs_env._thermal_limit_a[len(self.grid.line):] / 1000.
             self.grid.poly_cost.drop(self.grid.poly_cost.index, inplace=True)
-            assert len(self.grid.ext_grid) == 1 or self.grid.gen.slack.any()
-            assert len(obs.gen_type) == len(self.grid.gen) + len(self.grid.ext_grid)
+            assert len(self.grid.ext_grid) == 1 and len(obs.gen_type) == len(self.grid.gen) + len(self.grid.ext_grid)
             self.grid.bus.min_vm_pu = 0.9
             self.grid.bus.max_vm_pu = 1.2
             # gen
-            if len(self.grid.ext_grid) == 0:
-                self.grid.gen.type = obs.gen_type
-                self.grid.gen.controllable = obs.gen_redispatchable
-                self.grid.gen.min_p_mw = obs.gen_pmin
-                self.grid.gen.max_p_mw = obs.gen_pmax
-                self.grid.gen.min_q_mvar = -obs.gen_pmax
-                self.grid.gen.max_q_mvar = obs.gen_pmax
-                for row in self.grid.gen[self.grid.gen.controllable].itertuples():
-                    pp.create_poly_cost(self.grid, row.Index, "gen", cp1_eur_per_mw=1)  # perform loss minimization
-            else:
-                self.grid.gen.type = obs.gen_type[:-1]
-                self.grid.gen.controllable = obs.gen_redispatchable[:-1]
-                self.grid.gen.min_p_mw = obs.gen_pmin[:-1]
-                self.grid.gen.max_p_mw = obs.gen_pmax[:-1]
-                self.grid.gen.min_q_mvar = -obs.gen_pmax[:-1]
-                self.grid.gen.max_q_mvar = obs.gen_pmax[:-1]
-                # ext grid (last gen)
-                self.grid.ext_grid.type = obs.gen_type[-1]
-                self.grid.ext_grid.min_p_mw = obs.gen_pmin[-1]
-                self.grid.ext_grid.max_p_mw = obs.gen_pmax[-1]
-                self.grid.ext_grid.min_q_mvar = -obs.gen_pmax[-1]
-                self.grid.ext_grid.max_q_mvar = obs.gen_pmax[-1]
-                assert obs.gen_redispatchable[-1]
-                pp.create_poly_cost(self.grid, self.grid.ext_grid.index[0], "ext_grid", cp1_eur_per_mw=1)
+            self.grid.gen.type = obs.gen_type[:-1]
+            self.grid.gen.controllable = obs.gen_redispatchable[:-1]
+            self.grid.gen.min_p_mw = obs.gen_pmin[:-1]
+            self.grid.gen.max_p_mw = obs.gen_pmax[:-1]
             self.gen_min_p = obs.gen_pmin
             self.gen_max_p = obs.gen_pmax
+            # ext grid (last gen)
+            self.grid.gen.min_q_mvar = -obs.gen_pmax[:-1]
+            self.grid.gen.max_q_mvar = obs.gen_pmax[:-1]
+            self.grid.ext_grid.type = obs.gen_type[-1]
+            assert obs.gen_redispatchable[-1]
+            self.grid.ext_grid.min_p_mw = obs.gen_pmin[-1]
+            self.grid.ext_grid.max_p_mw = obs.gen_pmax[-1]
+            self.grid.ext_grid.min_q_mvar = -obs.gen_pmax[-1]
+            self.grid.ext_grid.max_q_mvar = obs.gen_pmax[-1]
+            for row in self.grid.gen[self.grid.gen.controllable].itertuples():
+                pp.create_poly_cost(self.grid, row.Index, "gen", cp1_eur_per_mw=1)  # perform loss minimization
+            pp.create_poly_cost(self.grid, self.grid.ext_grid.index[0], "ext_grid", cp1_eur_per_mw=3)
         self.refresh_gen_values(obs)
         self.grid.load["p_mw"] = obs.load_p
         self.grid.load["q_mvar"] = obs.load_q
@@ -118,22 +183,15 @@ class PandapowerOPFAgent(BaseAgent):
             self.grid.ext_grid.loc[row.Index, "vm_pu"] = ppf.find_value_for_pp_bus(self.grid, obs.v_or, obs.v_ex, row.bus)
         for row in self.grid.gen.itertuples():
             self.grid.gen.loc[row.Index, "vm_pu"] = ppf.find_value_for_pp_bus(self.grid, obs.v_or, obs.v_ex, row.bus)
+        self.grid.gen["p_mw"] = obs.prod_p[:-1]
+        self.grid.gen["res_q_mvar"] = obs.prod_q[:-1]
         ramp_down, ramp_up = obs.gen_max_ramp_down + 1e-6, obs.gen_max_ramp_up - 1e-6
-        if len(self.grid.ext_grid) == 0:
-            self.grid.gen["p_mw"] = obs.prod_p
-            self.grid.gen["res_q_mvar"] = obs.prod_q
-            abs_min, abs_max = np.minimum(self.grid.gen.p_mw, obs.gen_pmin), np.maximum(self.grid.gen.p_mw, obs.gen_pmax)
-            self.grid.gen["max_p_mw"] = (self.grid.gen.p_mw + ramp_up).clip(abs_min, abs_max)
-            self.grid.gen["min_p_mw"] = (self.grid.gen.p_mw - ramp_down).clip(abs_min, abs_max)
-        else:
-            self.grid.gen["p_mw"] = obs.prod_p[:-1]
-            self.grid.gen["res_q_mvar"] = obs.prod_q[:-1]
-            abs_min, abs_max = np.minimum(self.grid.gen.p_mw, obs.gen_pmin[:-1]), np.maximum(self.grid.gen.p_mw, obs.gen_pmax[:-1])
-            self.grid.ext_grid["max_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
-            self.grid.ext_grid["min_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
-            self.grid.ext_grid["p_mw"] = obs.prod_p[-1]
-            self.grid.gen["max_p_mw"] = (self.grid.gen.p_mw + ramp_up[:-1]).clip(abs_min, abs_max)
-            self.grid.gen["min_p_mw"] = (self.grid.gen.p_mw - ramp_down[:-1]).clip(abs_min, abs_max)
+        abs_min, abs_max = np.minimum(self.grid.gen.p_mw, obs.gen_pmin[:-1]), np.maximum(self.grid.gen.p_mw, obs.gen_pmax[:-1])
+        self.grid.gen["max_p_mw"] = (self.grid.gen.p_mw + ramp_up[:-1]).clip(abs_min, abs_max)
+        self.grid.gen["min_p_mw"] = (self.grid.gen.p_mw - ramp_down[:-1]).clip(abs_min, abs_max)
+        self.grid.ext_grid["p_mw"] = obs.prod_p[-1]
+        self.grid.ext_grid["max_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
+        self.grid.ext_grid["min_p_mw"] = (obs.prod_p[-1] + ramp_up[-1]).clip(obs.gen_pmin[-1], obs.gen_pmax[-1])
 
     def act(self, observation: grid2op.Observation, reward, done=False):
         # 1. Parse observations into pandapower grid
@@ -166,10 +224,7 @@ class PandapowerOPFAgent(BaseAgent):
                     lines_to_be_connected.append(trafo_zero_idx)  # automatically reconnect trafos if possible
                     self.grid.trafo.loc[trafo_oos, "in_service"] = True
         # 3. Perform OPF
-        if len(self.grid.ext_grid) > 0:
-            p_dispatched_current = np.array(self.grid.gen.p_mw.tolist() + self.grid.ext_grid.p_mw.tolist())
-        else:
-            p_dispatched_current = self.grid.gen.p_mw.values
+        p_dispatched_current = np.array(self.grid.gen.p_mw.tolist() + self.grid.ext_grid.p_mw.tolist())
         p_redispatched = p_dispatched_current
         generation, opf_line_status, opf_trafo_status, make_changes = ppf.run_opf(opf_grid, self.min_loss_reduction_mwt, self.acceptable_loading_pct,
                                                                                   self.opf_type.lower(), logger=self.logger)
@@ -183,33 +238,39 @@ class PandapowerOPFAgent(BaseAgent):
             new_connections = sorted(list(set(self.grid.line.index[~self.grid.line.in_service]) & set(opf_line_status.index[opf_line_status])))
             self.logger.info(f"OPF wants to disconnect: pp_{opf_line_status.index[~opf_line_status].tolist()} "
                              f"/ connect: pp_{self.grid.line.index[new_connections].tolist()} ")
+            
             p_redispatched = generation
         # 4. Convert to actions
         action_space = {}
         # Redispatch action
         gen_p_redispatched = ~np.isclose(p_dispatched_current, p_redispatched)
+        
         if np.any(gen_p_redispatched):
             p_redispatched -= p_dispatched_current  # make absolute power relative
-            p_redispatched[abs(p_redispatched) < 0.5] = 0.
+             # Limiting the redispatch max and min ramp up / ramp down for generators
+            maxim_ramp_up = [5,10,0,0,10]
+            minim_ramp_up = [-5,-10,0,0,-10]
+            p_redispatched = np.clip(p_redispatched, minim_ramp_up, maxim_ramp_up)
+        
+            p_redispatched[(abs(p_redispatched)) < 0.5] = 0.
             redispatch_sum = p_redispatched[gen_p_redispatched].sum()  # this sum needs to be 0. for a valid redispatch
             if redispatch_sum > 0.:
-                where_redisp = np.where(p_redispatched > 0)
-                power_up = where_redisp[0][np.argmax(p_redispatched[where_redisp])]
-                p_redispatched[power_up] -= redispatch_sum
+                power_up = np.where(p_redispatched > 0)[0]
+                p_redispatched[power_up] -= redispatch_sum / len(power_up)
             elif redispatch_sum < 0.:
-                where_redisp = np.where(p_redispatched < 0)
-                power_down = where_redisp[0][np.argmin(p_redispatched[where_redisp])]
-                p_redispatched[power_down] -= redispatch_sum
+                power_down = np.where(p_redispatched < 0)[0]
+                p_redispatched[power_down] -= redispatch_sum / len(power_down)
             assert abs(p_redispatched[gen_p_redispatched].sum()) < 1e-14
-            action_space["redispatch"] = [(idx, p) for idx, p in zip(np.arange(len(self.grid.gen) + len(self.grid.ext_grid))[gen_p_redispatched],
+            action_space["redispatch"] = [(idx, p) for idx, p in zip(np.arange(len(self.grid.gen) + 1)[gen_p_redispatched],
                                                                      p_redispatched[gen_p_redispatched]) if abs(p) >= 1e-3]
-            # self.logger.info(action_space["redispatch"])
+
+           #self.logger.info(action_space["redispatch"])
         # Set lines action
         new_line_status_array = np.zeros(observation.rho.shape)
         bus_idx = {"lines_or_id": [], "lines_ex_id": []}
         assert len(set(lines_to_disconnect) & set(lines_to_be_connected)) == 0
         if len(lines_to_disconnect) > 0:
-            # new_line_status_array[np.random.choice(lines_to_disconnect)] = -1  # can only open 1 line per time step (select randomly)
+            #new_line_status_array[np.random.choice(lines_to_disconnect)] = -1  # can only open 1 line per time step (select randomly)
             new_line_status_array[lines_to_disconnect[-1]] = -1  # can only open 1 line per time step (select transformers first)
         for line_idx in lines_to_be_connected:
             line_state = observation.state_of(line_id=line_idx)
