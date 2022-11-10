@@ -16,18 +16,21 @@ def find_value_for_pp_bus(grid: pp.pandapowerNet,
         if line.from_bus == bus:
             return voltages_from[idx] / bus_vn_kv
         elif line.to_bus == bus:
+            
             return voltages_to[idx] / bus_vn_kv
     for idx, trafo in enumerate(grid.trafo.itertuples()):
         if trafo.hv_bus == bus:
+            
             return voltages_from[len(grid.line) + idx] / bus_vn_kv
         elif trafo.lv_bus == bus:
+            
             return voltages_to[len(grid.line) + idx] / bus_vn_kv
     return None
 
 
 def calc_losses(grid: pp.pandapowerNet):
     # calculate grid losses
-    return -grid.res_bus.p_mw.sum()
+    return grid.res_gen.p_mw.sum() + grid.res_ext_grid.p_mw.sum() + grid.res_sgen.p_mw.sum() - grid.load.p_mw.sum()
 
 
 def make_zero_idx(elements: pd.DataFrame,
@@ -45,9 +48,13 @@ def run_opf(grid: pp.pandapowerNet,
             logger=logging.getLogger()):
     loss_before = calc_losses(grid)
     line_loading_before = grid.res_line.loading_percent.max()
-    trafo_loading_before = (grid.res_trafo.i_hv_ka / grid.trafo.max_i_ka * 100.).max()
+    trafo_loading_before = grid.res_trafo.loading_percent.max()
     try:
         if opf_type == "pypower":
+        
+            grid.ext_grid["min_p_mw"][0] = -100
+            grid.ext_grid["max_p_mw"][0] = 200
+        
             pp.runopp(grid)  # pypower OPF
         elif opf_type == "powermodels":
             grid.line["in_service"] = True
@@ -55,28 +62,26 @@ def run_opf(grid: pp.pandapowerNet,
             pp.runpm_ots(grid, pm_nl_solver="ipopt", pm_model="ACPPowerModel")  # PowerModels.jl OPF
             grid.line.loc[:, "in_service"] = grid.res_line.loc[:, "in_service"].values.astype(bool)
             grid.trafo.loc[:, "in_service"] = grid.res_trafo.loc[:, "in_service"].values.astype(bool)
-        if len(grid.ext_grid) > 0:
-            generation = np.array(grid.res_gen.p_mw.tolist() + grid.res_ext_grid.p_mw.tolist())
-        else:
-            generation = grid.res_gen.p_mw.values
+        generation = np.array(grid.res_gen.p_mw.tolist() + grid.res_ext_grid.p_mw.tolist())
         losses_avoided = loss_before - calc_losses(grid)
         line_loading_after = grid.res_line.loading_percent.max()
-        trafo_loading_after = (grid.res_trafo.i_hv_ka / grid.trafo.max_i_ka * 100.).max()
+        trafo_loading_after = grid.res_trafo.loading_percent.max()
         use_opf_results = False
+
         # three conditions for using the OPF results:
         # 1. transformer was overloaded before and is now less overloaded
         # 2. line was overloaded before and is now less overloaded
         # 3. losses are minimized at least by "min_loss_reduction_mwt" while all loadings are acceptably low
-        if trafo_loading_before > acceptable_loading and trafo_loading_after < trafo_loading_before:
+        if trafo_loading_before > acceptable_loading and trafo_loading_after < trafo_loading_before: 
             use_opf_results = True
         if line_loading_before > acceptable_loading and line_loading_after < line_loading_before:
             use_opf_results = True
         if losses_avoided > min_loss_reduction_mwt and line_loading_after < acceptable_loading and trafo_loading_after < acceptable_loading:
             use_opf_results = True
         if use_opf_results:
-            logger.info(f"Losses avoided: {losses_avoided:.3f} MW (max. loading: {line_loading_after:.1f}% [{line_loading_after - line_loading_before:.1f}%] "
-                        f"/ Trafo: {trafo_loading_after:.1f}% [{trafo_loading_after - trafo_loading_before:.1f}%])")
-            return generation, grid.line.in_service, grid.trafo.in_service, True
+           logger.info(f"Losses avoided: {losses_avoided:.3f} MW (max. loading: {line_loading_after:.1f}% [{line_loading_after - line_loading_before:.1f}%] "
+                       f"/ Trafo: {trafo_loading_after:.1f}% [{trafo_loading_after - trafo_loading_before:.1f}%])")
+           return generation, grid.line.in_service, grid.trafo.in_service, True
         return np.zeros(len(grid.gen)), grid.line.in_service, grid.trafo.in_service, False
     except pp.optimal_powerflow.OPFNotConverged:
         asset_str = f"if asset #{asset} is out of service" if len(asset) else ""
